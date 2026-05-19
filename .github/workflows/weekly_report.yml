@@ -1,0 +1,34 @@
+name: Avidian Weekly CRM Report
+ 
+on:
+  schedule:
+    # Every Monday at 7:30am EST (12:30 UTC)
+    - cron: '30 12 * * 1'
+  workflow_dispatch:
+    # Also allows manual trigger from GitHub Actions tab
+ 
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+ 
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+ 
+      - name: Install dependencies
+        run: pip install requests openpyxl sendgrid
+ 
+      - name: Run report and send email
+        env:
+          CRM_USERNAME: ${{ secrets.CRM_USERNAME }}
+          CRM_PASSWORD: ${{ secrets.CRM_PASSWORD }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          TO_EMAIL: hs@jfrecycle.com
+          FROM_EMAIL: hs@jfrecycle.com
+        run: python report.py
+ 
