@@ -100,6 +100,7 @@ for i, n in enumerate(all_notes):
     stage    = safe_str(opp.get('UserDefined02', '')) if opp else ''
     city     = safe_str(opp.get('CompanyBusinessCity', '')) if opp else ''
     state    = safe_str(opp.get('CompanyBusinessState', '')) if opp else ''
+    compete  = safe_str(opp.get('UserDefined34', '')) if opp else ''
     print(f'  [{i+1}/{len(all_notes)}] {author} — {activity_type} — {company}')
     api_date  = (n.get('CreatedDate') or '')[:10]
     backdated = False
@@ -120,6 +121,7 @@ for i, n in enumerate(all_notes):
         'Stage':            stage,
         'City':             city,
         'State':            state,
+        'Competition':      compete,
         'User':             safe_str(author),
         'Date':             safe_str(date_str),
         'Activity Type':    safe_str(activity_type),
@@ -148,7 +150,7 @@ alt_fill      = PatternFill(start_color='EFF6FF', end_color='EFF6FF', fill_type=
 # Sheet 1 - Notes by Activity
 ws1 = wb.active
 ws1.title = 'Notes by Activity'
-headers         = ['Company Name','Opportunity Name','Stage','City','State','User','Date','Activity Type','Note']
+headers         = ['Company Name','Opportunity Name','Stage','City','State','Competition','User','Date','Activity Type','Note']
 display_headers = headers + ['Backdated?']
 for ci, h in enumerate(display_headers, 1):
     c = ws1.cell(row=1, column=ci, value=h)
@@ -167,7 +169,7 @@ for ri, rec in enumerate(results, 2):
     if is_backdated:
         c.fill=flag_fill; c.font=Font(bold=True, color='856404', size=11)
     elif row_fill: c.fill=row_fill
-cw = {'Company Name':28,'Opportunity Name':32,'Stage':26,'City':18,'State':10,
+cw = {'Company Name':28,'Opportunity Name':32,'Stage':26,'City':18,'State':10,'Competition':22,
       'User':22,'Date':22,'Activity Type':28,'Note':70,'Backdated?':28}
 for ci, h in enumerate(display_headers, 1):
     ws1.column_dimensions[get_column_letter(ci)].width = cw.get(h, 20)
@@ -265,3 +267,92 @@ message.attachment = attachment
 sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
 response = sg.send(message)
 print(f'Email sent! Status: {response.status_code}')
+
+# ── Duplicate Touch Detection ──────────────────────────────
+from datetime import datetime as dt
+
+touch_events = []
+for rec in results:
+    api_date = rec.get('_api_date', '')
+    raw_date = rec.get('Date', '')
+    user     = rec.get('User', '')
+    company  = rec.get('Company Name', '')
+    atype    = rec.get('Activity Type', '')
+    if not user or not company or not api_date: continue
+    parsed_dt = None
+    for fmt in ['%m/%d/%Y %I:%M %p', '%m/%d/%Y %I:%M:%S %p', '%m/%d/%Y']:
+        try:
+            parsed_dt = dt.strptime(raw_date.strip(), fmt)
+            break
+        except: pass
+    if parsed_dt is None:
+        try: parsed_dt = dt.fromisoformat(api_date)
+        except: continue
+    touch_events.append((parsed_dt, user, company, atype))
+
+touch_events.sort(key=lambda x: (x[1], x[2], x[0]))
+
+duplicates = []
+i = 0
+while i < len(touch_events):
+    first_dt, user, company, atype = touch_events[i]
+    group = [touch_events[i]]
+    j = i + 1
+    while j < len(touch_events):
+        next_dt, next_user, next_company = touch_events[j][0], touch_events[j][1], touch_events[j][2]
+        if next_user != user or next_company != company: break
+        diff_mins = (next_dt - first_dt).total_seconds() / 60
+        if diff_mins <= 30:
+            group.append(touch_events[j])
+            j += 1
+        else: break
+    if len(group) > 1:
+        for dup in group[1:]:
+            duplicates.append((first_dt, dup[0], user, company, dup[3]))
+    i = j if j > i + 1 else i + 1
+
+# Write duplicate section to sheet 2
+gap = 3
+dup_start_row = ri + gap
+
+c = ws2.cell(row=dup_start_row, column=1, value='DUPLICATE TOUCHES (same user, same company, within 30 mins)')
+c.font=Font(bold=True, color='FFFFFF', size=12)
+c.fill=PatternFill(start_color='B45309', end_color='B45309', fill_type='solid')
+c.alignment=left_mid; c.border=border
+ws2.merge_cells(start_row=dup_start_row, start_column=1, end_row=dup_start_row, end_column=6)
+
+dup_headers = ['User', 'Company', 'First Touch', 'Duplicate Touch', 'Time Apart (mins)', 'Activity Type']
+for ci, h in enumerate(dup_headers, 1):
+    c = ws2.cell(row=dup_start_row+1, column=ci, value=h)
+    c.font=hdr_font; c.fill=hdr_fill; c.alignment=mid; c.border=border
+
+dup_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
+dup_alt  = PatternFill(start_color='FDE68A', end_color='FDE68A', fill_type='solid')
+
+if not duplicates:
+    c = ws2.cell(row=dup_start_row+2, column=1, value='No duplicate touches found in this period.')
+    c.font=Font(italic=True, size=11); c.alignment=left_mid
+    ws2.merge_cells(start_row=dup_start_row+2, start_column=1, end_row=dup_start_row+2, end_column=6)
+else:
+    for di, (first_dt, dup_dt, user, company, atype) in enumerate(duplicates, dup_start_row+2):
+        fill = dup_fill if di % 2 == 0 else dup_alt
+        mins_apart = round((dup_dt - first_dt).total_seconds() / 60, 1)
+        row_vals = [user, company,
+                    first_dt.strftime('%m/%d/%Y %I:%M %p'),
+                    dup_dt.strftime('%m/%d/%Y %I:%M %p'),
+                    mins_apart, atype]
+        for ci, val in enumerate(row_vals, 1):
+            c = ws2.cell(row=di, column=ci, value=val)
+            c.border=border; c.fill=fill
+            c.alignment=mid if ci > 2 else left_mid
+        ws2.row_dimensions[di].height = 20
+
+ws2.column_dimensions['A'].width = max(32, ws2.column_dimensions['A'].width)
+ws2.column_dimensions['B'].width = 30
+ws2.column_dimensions['C'].width = 22
+ws2.column_dimensions['D'].width = 22
+ws2.column_dimensions['E'].width = 20
+ws2.column_dimensions['F'].width = 28
+
+print(f'Found {len(duplicates)} duplicate touches')
+
