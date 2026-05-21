@@ -11,29 +11,37 @@ from openpyxl.utils import get_column_letter
 import sendgrid
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 import base64 as b64
-
+ 
 # ── Credentials from GitHub Secrets ───────────────────────
 USERNAME = os.environ['CRM_USERNAME']
 PASSWORD = os.environ['CRM_PASSWORD']
 SENDGRID_API_KEY = os.environ['SENDGRID_API_KEY']
 TO_EMAIL = os.environ.get('TO_EMAIL', 'hs@jfrecycle.com')
 FROM_EMAIL = os.environ.get('FROM_EMAIL', 'hs@jfrecycle.com')
-
+ 
 BASE_URL = 'https://prophetOnDemand.com/prophet/prophetwebservices/AvtProphetApi/odata'
 EXCEL_MAX = 32000
-
+ 
 token = base64.b64encode(f'{USERNAME}:{PASSWORD}'.encode()).decode()
 HEADERS = {'Authorization': f'Basic {token}', 'Accept': 'application/json;odata=verbose'}
-
+ 
 cutoff_dt = datetime.now(timezone.utc) - timedelta(days=7)
 cutoff    = cutoff_dt.strftime('%Y-%m-%dT00:00:00')
 print(f'Pulling notes from last 7 days (since {cutoff[:10]})')
-
+ 
 def safe_str(val):
     if val is None: return ''
     s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', str(val))
     return (s[:EXCEL_MAX] + '... [truncated]') if len(s) > EXCEL_MAX else s
-
+ 
+def should_skip_note(body):
+    """Skip notes that are blank or contain system assignment phrases."""
+    if not body or not body.strip(): return True
+    lower = body.lower()
+    if 'assigned to' in lower: return True
+    if 'removed user' in lower: return True
+    return False
+ 
 def parse_note(raw):
     if not raw: return '', '', '', ''
     text   = raw.replace('\r\n', '\n').replace('\r', '\n')
@@ -48,10 +56,10 @@ def parse_note(raw):
     m_date   = re.match(r'^(.+?)\s*-\s*Modified by:', date_author, re.IGNORECASE)
     date_str = m_date.group(1).strip() if m_date else ''
     return author, activity_type, date_str, body
-
+ 
 def week_start(dt):
     return dt - timedelta(days=dt.weekday())
-
+ 
 # ── Fetch notes ────────────────────────────────────────────
 note_filter = f"CreatedDate ge datetime'{cutoff}'"
 all_notes, skip = [], 0
@@ -67,13 +75,13 @@ while True:
     print(f'  ...{len(all_notes)} notes fetched')
     if len(page) < 100: break
     skip += 100
-
+ 
 print(f'Total notes: {len(all_notes)}')
-
+ 
 # ── Process notes ──────────────────────────────────────────
 weekly_activity = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 opp_cache = {}
-
+ 
 def get_opp(entity_id):
     if entity_id in opp_cache: return opp_cache[entity_id]
     try:
@@ -86,7 +94,7 @@ def get_opp(entity_id):
     except: pass
     opp_cache[entity_id] = None
     return None
-
+ 
 results = []
 for i, n in enumerate(all_notes):
     entity_id = n.get('EntityId', '')
@@ -94,6 +102,7 @@ for i, n in enumerate(all_notes):
     author, activity_type, date_str, body = parse_note(raw)
     if not author and not body: continue
     if author and author.lower() == 'system': continue
+    if should_skip_note(body): continue
     opp      = get_opp(entity_id)
     company  = safe_str(opp.get('CompanyName', '')) if opp else ''
     opp_name = safe_str(opp.get('RecordDescription', '')) if opp else ''
@@ -129,9 +138,9 @@ for i, n in enumerate(all_notes):
         '_backdated':       backdated,
         '_api_date':        api_date,
     })
-
+ 
 print(f'Processed {len(results)} note rows')
-
+ 
 # ── Build Excel ────────────────────────────────────────────
 wb = Workbook()
 hdr_fill      = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
@@ -146,7 +155,7 @@ left_mid      = Alignment(horizontal='left', vertical='center')
 thin          = Side(style='thin', color='D1D5DB')
 border        = Border(left=thin, right=thin, top=thin, bottom=thin)
 alt_fill      = PatternFill(start_color='EFF6FF', end_color='EFF6FF', fill_type='solid')
-
+ 
 # Sheet 1 - Notes by Activity
 ws1 = wb.active
 ws1.title = 'Notes by Activity'
@@ -176,7 +185,7 @@ for ci, h in enumerate(display_headers, 1):
 ws1.row_dimensions[1].height = 22
 for ri in range(2, len(results)+2): ws1.row_dimensions[ri].height = 80
 ws1.freeze_panes='A2'; ws1.auto_filter.ref=ws1.dimensions
-
+ 
 # Sheet 2 - Weekly Activity Summary
 ws2 = wb.create_sheet(title='Activity Summary (Weekly)')
 all_types = sorted(set(at for wd in weekly_activity.values() for ud in wd.values() for at in ud))
@@ -228,19 +237,19 @@ for ci in range(3, len(sh)+1):
 ws2.row_dimensions[1].height = 22
 for r in range(2, ri): ws2.row_dimensions[r].height = 22
 ws2.freeze_panes='C2'
-
+ 
 filename = f'avidian_weekly_{datetime.now(timezone.utc).strftime("%Y-%m-%d")}.xlsx'
 wb.save(filename)
 print(f'Saved {filename}')
-
+ 
 # ── Send email via SendGrid ────────────────────────────────
 with open(filename, 'rb') as f:
     file_data = f.read()
 encoded = b64.b64encode(file_data).decode()
-
+ 
 today     = datetime.now(timezone.utc).strftime('%B %d, %Y')
 week_ago  = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%B %d, %Y')
-
+ 
 message = Mail(
     from_email=FROM_EMAIL,
     to_emails=TO_EMAIL,
@@ -255,7 +264,7 @@ message = Mail(
     <p style="color:#888; font-size:12px;">This report was generated automatically every Monday at 7:30am EST.</p>
     '''
 )
-
+ 
 attachment = Attachment(
     FileContent(encoded),
     FileName(filename),
@@ -263,14 +272,14 @@ attachment = Attachment(
     Disposition('attachment')
 )
 message.attachment = attachment
-
+ 
 sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
 response = sg.send(message)
 print(f'Email sent! Status: {response.status_code}')
-
+ 
 # ── Duplicate Touch Detection ──────────────────────────────
 from datetime import datetime as dt
-
+ 
 touch_events = []
 for rec in results:
     api_date = rec.get('_api_date', '')
@@ -289,9 +298,9 @@ for rec in results:
         try: parsed_dt = dt.fromisoformat(api_date)
         except: continue
     touch_events.append((parsed_dt, user, company, atype))
-
+ 
 touch_events.sort(key=lambda x: (x[1], x[2], x[0]))
-
+ 
 duplicates = []
 i = 0
 while i < len(touch_events):
@@ -310,25 +319,25 @@ while i < len(touch_events):
         for dup in group[1:]:
             duplicates.append((first_dt, dup[0], user, company, dup[3]))
     i = j if j > i + 1 else i + 1
-
+ 
 # Write duplicate section to sheet 2
 gap = 3
 dup_start_row = ri + gap
-
+ 
 c = ws2.cell(row=dup_start_row, column=1, value='DUPLICATE TOUCHES (same user, same company, within 30 mins)')
 c.font=Font(bold=True, color='FFFFFF', size=12)
 c.fill=PatternFill(start_color='B45309', end_color='B45309', fill_type='solid')
 c.alignment=left_mid; c.border=border
 ws2.merge_cells(start_row=dup_start_row, start_column=1, end_row=dup_start_row, end_column=6)
-
+ 
 dup_headers = ['User', 'Company', 'First Touch', 'Duplicate Touch', 'Time Apart (mins)', 'Activity Type']
 for ci, h in enumerate(dup_headers, 1):
     c = ws2.cell(row=dup_start_row+1, column=ci, value=h)
     c.font=hdr_font; c.fill=hdr_fill; c.alignment=mid; c.border=border
-
+ 
 dup_fill = PatternFill(start_color='FEF3C7', end_color='FEF3C7', fill_type='solid')
 dup_alt  = PatternFill(start_color='FDE68A', end_color='FDE68A', fill_type='solid')
-
+ 
 if not duplicates:
     c = ws2.cell(row=dup_start_row+2, column=1, value='No duplicate touches found in this period.')
     c.font=Font(italic=True, size=11); c.alignment=left_mid
@@ -346,13 +355,12 @@ else:
             c.border=border; c.fill=fill
             c.alignment=mid if ci > 2 else left_mid
         ws2.row_dimensions[di].height = 20
-
+ 
 ws2.column_dimensions['A'].width = max(32, ws2.column_dimensions['A'].width)
 ws2.column_dimensions['B'].width = 30
 ws2.column_dimensions['C'].width = 22
 ws2.column_dimensions['D'].width = 22
 ws2.column_dimensions['E'].width = 20
 ws2.column_dimensions['F'].width = 28
-
+ 
 print(f'Found {len(duplicates)} duplicate touches')
-
