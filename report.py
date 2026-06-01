@@ -50,6 +50,7 @@ def parse_note(raw):
     chunks = [c.strip() for c in re.split(r'-{3,}', header) if c.strip()]
     date_author   = chunks[0] if chunks else ''
     activity_type = chunks[1] if len(chunks) > 1 else ''
+    if not activity_type: activity_type = 'Uncategorized'
     m_author = re.search(r'Modified by:\s*(.+)$', date_author, re.IGNORECASE)
     author   = m_author.group(1).strip() if m_author else ''
     m_date   = re.match(r'^(.+?)\s*-\s*Modified by:', date_author, re.IGNORECASE)
