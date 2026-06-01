@@ -2,10 +2,10 @@ name: Avidian Weekly CRM Report
  
 on:
   schedule:
-    # Every Monday at 7:30am EST (12:30 UTC)
-    - cron: '30 12 * * 1'
+    # 7:30am EDT (UTC-4) = 11:30 UTC (March-November)
+    # 7:30am EST (UTC-5) = 12:30 UTC (November-March)
+    - cron: '30 11 * * 1'
   workflow_dispatch:
-    # Also allows manual trigger from GitHub Actions tab
  
 jobs:
   send-report:
