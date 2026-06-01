@@ -508,6 +508,7 @@ message = Mail(
     <p><strong>Total activities logged:</strong> {len(results)}</p>
     <p style="color:#856404;"><strong>Note:</strong> Rows highlighted in yellow indicate backdated entries.</p>
     <p>The updated master activity file is also attached — it contains all weeks to date.</p>
+    <p style="color:#6B7280; font-size:12px;"><strong>Heads up:</strong> Emails sent through Prophet are not included in this report. Avidian's API does not expose the Emails tab, so those activities cannot be pulled automatically.</p>
     <br>
     <p style="color:#888; font-size:12px;">This report was generated automatically every Monday at 7:30am EST.</p>
     '''
