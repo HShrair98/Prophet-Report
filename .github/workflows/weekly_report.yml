@@ -20,6 +20,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
  
+      - name: Keep workflow active
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          echo "Last run: $(date)" > .last_run
+          git add .last_run
+          git commit -m "Keepalive: $(date)" || echo "Nothing to commit"
+          git push || echo "Nothing to push"
+ 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -36,4 +45,3 @@ jobs:
           TO_EMAIL: hs@jfrecycle.com
           FROM_EMAIL: hs@jfrecycle.com
         run: python report.py
- 
