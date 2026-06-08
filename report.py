@@ -190,7 +190,26 @@ ws1.freeze_panes='A2'; ws1.auto_filter.ref=ws1.dimensions
  
 # Sheet 2 - Weekly Activity Summary
 ws2 = wb.create_sheet(title='Activity Summary (Weekly)')
-all_types = sorted(set(at for wd in weekly_activity.values() for ud in wd.values() for at in ud))
+# Fixed activity type columns — always in this order regardless of what was logged this week
+all_types = [
+    'Activity',
+    'Activity/General Notes',
+    'Appointment - Completed',
+    'Appointment - Scheduled',
+    'Cold Call Via Email',
+    'Cold Call Visit - Successful',
+    'Cold Call Visit - Unsuccessful',
+    'Cold Call via Phone',
+    'Courtesy Phone Call',
+    'Courtesy Site Visit',
+    'Email',
+    'Group Email',
+    'Payment Delivery',
+    'Phone - Incoming',
+    'Phone - Outgoing',
+    'Text',
+    'Uncategorized',
+]
 all_weeks = sorted(weekly_activity.keys())
 sh = ['Week', 'User'] + all_types + ['TOTAL']
 for ci, h in enumerate(sh, 1):
