@@ -15,7 +15,7 @@ import base64 as b64
 USERNAME         = os.environ['CRM_USERNAME']
 PASSWORD         = os.environ['CRM_PASSWORD']
 SENDGRID_API_KEY = os.environ['SENDGRID_API_KEY']
-TO_EMAIL         = ['hs@jfrecycle.com', 'rag@jfrecycle.com', 'jf@jfrecycle.com']
+TO_EMAIL         = ['hs@jfrecycle.com', 'rag@jfrecycle.com', 'jf@jfrecycle.com', 'ig@jfrecycle.com']
 FROM_EMAIL       = os.environ.get('FROM_EMAIL', 'hs@jfrecycle.com')
 MASTER_FILE      = 'master_activity.xlsx'
 
