@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 import sendgrid
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 import base64 as b64
- 
+
 # ── Credentials from GitHub Secrets ───────────────────────
 USERNAME         = os.environ['CRM_USERNAME']
 PASSWORD         = os.environ['CRM_PASSWORD']
@@ -18,29 +18,29 @@ SENDGRID_API_KEY = os.environ['SENDGRID_API_KEY']
 TO_EMAIL         = ['hs@jfrecycle.com', 'rag@jfrecycle.com', 'jf@jfrecycle.com']
 FROM_EMAIL       = os.environ.get('FROM_EMAIL', 'hs@jfrecycle.com')
 MASTER_FILE      = 'master_activity.xlsx'
- 
+
 BASE_URL = 'https://prophetOnDemand.com/prophet/prophetwebservices/AvtProphetApi/odata'
 EXCEL_MAX = 32000
- 
+
 token = base64.b64encode(f'{USERNAME}:{PASSWORD}'.encode()).decode()
 HEADERS = {'Authorization': f'Basic {token}', 'Accept': 'application/json;odata=verbose'}
- 
+
 cutoff_dt = datetime.now(timezone.utc) - timedelta(days=7)
 cutoff    = cutoff_dt.strftime('%Y-%m-%dT00:00:00')
 print(f'Pulling notes from last 7 days (since {cutoff[:10]})')
- 
+
 def safe_str(val):
     if val is None: return ''
     s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', str(val))
     return (s[:EXCEL_MAX] + '... [truncated]') if len(s) > EXCEL_MAX else s
- 
+
 def should_skip_note(body):
     if not body or not body.strip(): return True
     lower = body.lower()
     if 'assigned to' in lower: return True
     if 'removed user' in lower: return True
     return False
- 
+
 def parse_note(raw):
     if not raw: return '', '', '', ''
     text   = raw.replace('\r\n', '\n').replace('\r', '\n')
@@ -56,10 +56,10 @@ def parse_note(raw):
     m_date   = re.match(r'^(.+?)\s*-\s*Modified by:', date_author, re.IGNORECASE)
     date_str = m_date.group(1).strip() if m_date else ''
     return author, activity_type, date_str, body
- 
+
 def week_start(d):
     return d - timedelta(days=d.weekday())
- 
+
 # ── Fetch notes ────────────────────────────────────────────
 note_filter = f"CreatedDate ge datetime'{cutoff}'"
 all_notes, skip = [], 0
@@ -75,26 +75,36 @@ while True:
     print(f'  ...{len(all_notes)} notes fetched')
     if len(page) < 100: break
     skip += 100
- 
+
 print(f'Total notes: {len(all_notes)}')
- 
+
 # ── Process notes ──────────────────────────────────────────
 weekly_activity = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 opp_cache = {}
- 
+
 def get_opp(entity_id):
     if entity_id in opp_cache: return opp_cache[entity_id]
     try:
+        # Try filter first
         r = requests.get(f"{BASE_URL}/OpportunityViews?$filter=Id eq guid'{entity_id}'", headers=HEADERS)
         if r.status_code == 200:
-            items = r.json().get('value') or r.json().get('d', {}).get('results', [])
+            data = r.json()
+            items = data.get('value') or data.get('d', {}).get('results', [])
             if items:
                 opp_cache[entity_id] = items[0]
                 return items[0]
+        # Fallback: try direct lookup by GUID
+        r2 = requests.get(f"{BASE_URL}/OpportunityViews(guid'{entity_id}')", headers=HEADERS)
+        if r2.status_code == 200:
+            data2 = r2.json()
+            item = data2.get('d') or (data2.get('value') or [None])[0]
+            if item and item.get('CompanyName'):
+                opp_cache[entity_id] = item
+                return item
     except: pass
-    opp_cache[entity_id] = None
+    # Don't cache None — let it retry next time
     return None
- 
+
 results = []
 for i, n in enumerate(all_notes):
     entity_id = n.get('EntityId', '')
@@ -138,9 +148,9 @@ for i, n in enumerate(all_notes):
         '_backdated':       backdated,
         '_api_date':        api_date,
     })
- 
+
 print(f'Processed {len(results)} note rows')
- 
+
 # ── Shared styles ──────────────────────────────────────────
 hdr_fill      = PatternFill(start_color='1E40AF', end_color='1E40AF', fill_type='solid')
 hdr_font      = Font(bold=True, color='FFFFFF', size=11)
@@ -154,10 +164,10 @@ left_mid      = Alignment(horizontal='left', vertical='center')
 thin          = Side(style='thin', color='D1D5DB')
 border        = Border(left=thin, right=thin, top=thin, bottom=thin)
 alt_fill      = PatternFill(start_color='EFF6FF', end_color='EFF6FF', fill_type='solid')
- 
+
 # ── Build weekly report Excel ──────────────────────────────
 wb = Workbook()
- 
+
 # Sheet 1 - Notes by Activity
 ws1 = wb.active
 ws1.title = 'Notes by Activity'
@@ -187,7 +197,7 @@ for ci, h in enumerate(display_headers, 1):
 ws1.row_dimensions[1].height = 22
 for ri in range(2, len(results)+2): ws1.row_dimensions[ri].height = 80
 ws1.freeze_panes='A2'; ws1.auto_filter.ref=ws1.dimensions
- 
+
 # Sheet 2 - Weekly Activity Summary
 ws2 = wb.create_sheet(title='Activity Summary (Weekly)')
 # Fixed activity type columns — always in this order regardless of what was logged this week
@@ -257,7 +267,7 @@ for ci in range(3, len(sh)+1):
 ws2.row_dimensions[1].height = 22
 for r in range(2, ri): ws2.row_dimensions[r].height = 22
 ws2.freeze_panes='C2'
- 
+
 # Duplicate touch detection
 from datetime import datetime as dt
 touch_events = []
@@ -278,7 +288,7 @@ for rec in results:
         try: parsed_dt = dt.fromisoformat(api_date)
         except: continue
     touch_events.append((parsed_dt, user, company, atype))
- 
+
 touch_events.sort(key=lambda x: (x[1], x[2], x[0]))
 duplicates = []
 i = 0
@@ -296,7 +306,7 @@ while i < len(touch_events):
         for dup in group[1:]:
             duplicates.append((first_dt, dup[0], user, company, dup[3]))
     i = j if j > i + 1 else i + 1
- 
+
 gap = 3
 dup_start_row = ri + gap
 c = ws2.cell(row=dup_start_row, column=1, value='DUPLICATE TOUCHES (same user, same company, within 30 mins)')
@@ -332,18 +342,18 @@ ws2.column_dimensions['D'].width = 22
 ws2.column_dimensions['E'].width = 20
 ws2.column_dimensions['F'].width = 28
 print(f'Found {len(duplicates)} duplicate touches')
- 
+
 weekly_filename = f'avidian_weekly_{datetime.now(timezone.utc).strftime("%Y-%m-%d")}.xlsx'
 wb.save(weekly_filename)
 print(f'Saved {weekly_filename}')
- 
+
 # ── Update Master File ─────────────────────────────────────
 today_dt   = datetime.now(timezone.utc)
 week_start_dt = week_start(today_dt - timedelta(days=7))
 week_end_dt   = week_start_dt + timedelta(days=6)
 week_label    = f"{week_start_dt.strftime('%m/%d/%Y')} - {week_end_dt.strftime('%m/%d/%Y')}"
 tab_name      = f"Wk {week_start_dt.strftime('%m-%d-%Y')}"
- 
+
 # Load existing master or create new one
 if os.path.exists(MASTER_FILE):
     master_wb = load_workbook(MASTER_FILE)
@@ -353,11 +363,11 @@ else:
     # Remove default sheet
     master_wb.remove(master_wb.active)
     print(f'Created new master file')
- 
+
 # ── Master Sheet 1: All Weeks (stacked) ───────────────────
 ALL_WEEKS_SHEET = 'All Weeks'
 master_headers = ['Week', 'User'] + all_types + ['TOTAL']
- 
+
 if ALL_WEEKS_SHEET not in master_wb.sheetnames:
     mws = master_wb.create_sheet(ALL_WEEKS_SHEET, 0)
     # Write headers
@@ -387,7 +397,7 @@ else:
         for ci, h in enumerate(master_headers, 1):
             c = mws.cell(row=1, column=ci, value=h)
             c.font=hdr_font; c.fill=hdr_fill; c.alignment=mid; c.border=border
- 
+
 # Append this week's data to All Weeks sheet
 for ws_dt in all_weeks:
     w_end      = ws_dt + timedelta(days=6)
@@ -436,18 +446,18 @@ for ws_dt in all_weeks:
     c.font=total_font; c.fill=total_fill; c.alignment=mid; c.border=border
     mws.row_dimensions[next_row].height = 22
     next_row += 1
- 
+
 mws.auto_filter.ref = f"A1:{get_column_letter(len(master_headers))}1"
- 
+
 # ── Master Sheet 2: Tab per week ──────────────────────────
 if tab_name in master_wb.sheetnames:
     del master_wb[tab_name]
- 
+
 week_ws = master_wb.create_sheet(title=tab_name)
 for ci, h in enumerate(master_headers, 1):
     c = week_ws.cell(row=1, column=ci, value=h)
     c.font=hdr_font; c.fill=hdr_fill; c.alignment=mid; c.border=border
- 
+
 wri = 2
 for ws_dt in all_weeks:
     w_end      = ws_dt + timedelta(days=6)
@@ -491,10 +501,10 @@ for ci in range(3, len(master_headers)+1):
     week_ws.column_dimensions[get_column_letter(ci)].width = 22
 week_ws.row_dimensions[1].height = 22
 week_ws.freeze_panes = 'C2'
- 
+
 master_wb.save(MASTER_FILE)
 print(f'Master file updated: {MASTER_FILE}')
- 
+
 # ── Commit master file back to GitHub repo ─────────────────
 import subprocess
 subprocess.run(['git', 'config', 'user.email', 'actions@github.com'], check=True)
@@ -507,16 +517,16 @@ if result.returncode != 0:
     print('Master file committed and pushed to GitHub')
 else:
     print('No changes to master file')
- 
+
 # ── Send email via SendGrid ────────────────────────────────
 with open(weekly_filename, 'rb') as f:
     weekly_data = f.read()
 with open(MASTER_FILE, 'rb') as f:
     master_data = f.read()
- 
+
 today_str    = datetime.now(timezone.utc).strftime('%B %d, %Y')
 week_ago_str = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%B %d, %Y')
- 
+
 message = Mail(
     from_email=FROM_EMAIL,
     to_emails=TO_EMAIL,
@@ -533,7 +543,7 @@ message = Mail(
     <p style="color:#888; font-size:12px;">This report was generated automatically every Monday at 7:30am EST.</p>
     '''
 )
- 
+
 for fname, fdata in [(weekly_filename, weekly_data), (MASTER_FILE, master_data)]:
     attachment = Attachment(
         FileContent(b64.b64encode(fdata).decode()),
@@ -542,7 +552,7 @@ for fname, fdata in [(weekly_filename, weekly_data), (MASTER_FILE, master_data)]
         Disposition('attachment')
     )
     message.add_attachment(attachment)
- 
+
 sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
 response = sg.send(message)
 print(f'Email sent! Status: {response.status_code}')
