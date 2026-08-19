@@ -106,6 +106,31 @@ def get_opp(entity_id):
     except: pass
     return None
 
+# Pre-fetch all unique opportunity IDs in one pass to avoid rate limiting
+print('Pre-fetching opportunity details...')
+unique_ids = list(set(n.get('EntityId', '') for n in all_notes if n.get('EntityId')))
+print(f'Found {len(unique_ids)} unique opportunity IDs')
+for idx, eid in enumerate(unique_ids):
+    if eid in opp_cache: continue
+    try:
+        time.sleep(0.2)
+        r = requests.get(f"{BASE_URL}/OpportunityViews(guid'{eid}')", headers=HEADERS)
+        if r.status_code == 200:
+            item = r.json().get('d')
+            if item and item.get('CompanyName'):
+                opp_cache[eid] = item
+                continue
+        # Fallback filter lookup
+        r2 = requests.get(f"{BASE_URL}/OpportunityViews?$filter=Id eq guid'{eid}'", headers=HEADERS)
+        if r2.status_code == 200:
+            items = r2.json().get('value') or r2.json().get('d', {}).get('results', [])
+            if items and items[0].get('CompanyName'):
+                opp_cache[eid] = items[0]
+    except: pass
+    if (idx+1) % 50 == 0:
+        print(f'  ...looked up {idx+1}/{len(unique_ids)} opportunities')
+print(f'Pre-fetch complete: {len(opp_cache)} opportunities cached')
+
 results = []
 for i, n in enumerate(all_notes):
     entity_id = n.get('EntityId', '')
@@ -114,7 +139,7 @@ for i, n in enumerate(all_notes):
     if not author and not body: continue
     if author and author.lower() == 'system': continue
     if should_skip_note(body): continue
-    opp      = get_opp(entity_id)
+    opp      = opp_cache.get(entity_id)
     company  = safe_str(opp.get('CompanyName', '')) if opp else ''
     opp_name = safe_str(opp.get('RecordDescription', '')) if opp else ''
     stage    = safe_str(opp.get('UserDefined02', '')) if opp else ''
