@@ -1,4 +1,5 @@
 import requests
+import time
 import base64
 import re
 import os
@@ -15,7 +16,7 @@ import base64 as b64
 USERNAME         = os.environ['CRM_USERNAME']
 PASSWORD         = os.environ['CRM_PASSWORD']
 SENDGRID_API_KEY = os.environ['SENDGRID_API_KEY']
-TO_EMAIL         = ['hs@jfrecycle.com', 'rag@jfrecycle.com', 'jf@jfrecycle.com', 'ig@jfrecycle.com']
+TO_EMAIL         = ['hs@jfrecycle.com', 'rag@jfrecycle.com', 'jf@jfrecycle.com']
 FROM_EMAIL       = os.environ.get('FROM_EMAIL', 'hs@jfrecycle.com')
 MASTER_FILE      = 'master_activity.xlsx'
 
@@ -85,24 +86,24 @@ opp_cache = {}
 def get_opp(entity_id):
     if entity_id in opp_cache: return opp_cache[entity_id]
     try:
-        # Try filter first
-        r = requests.get(f"{BASE_URL}/OpportunityViews?$filter=Id eq guid'{entity_id}'", headers=HEADERS)
+        time.sleep(0.3)  # Avoid rate limiting
+        # Direct lookup by GUID — most reliable method
+        r = requests.get(f"{BASE_URL}/OpportunityViews(guid'{entity_id}')", headers=HEADERS)
         if r.status_code == 200:
             data = r.json()
-            items = data.get('value') or data.get('d', {}).get('results', [])
-            if items:
-                opp_cache[entity_id] = items[0]
-                return items[0]
-        # Fallback: try direct lookup by GUID
-        r2 = requests.get(f"{BASE_URL}/OpportunityViews(guid'{entity_id}')", headers=HEADERS)
-        if r2.status_code == 200:
-            data2 = r2.json()
-            item = data2.get('d') or (data2.get('value') or [None])[0]
+            item = data.get('d')
             if item and item.get('CompanyName'):
                 opp_cache[entity_id] = item
                 return item
+        # Fallback: filter lookup
+        r2 = requests.get(f"{BASE_URL}/OpportunityViews?$filter=Id eq guid'{entity_id}'", headers=HEADERS)
+        if r2.status_code == 200:
+            data2 = r2.json()
+            items = data2.get('value') or data2.get('d', {}).get('results', [])
+            if items and items[0].get('CompanyName'):
+                opp_cache[entity_id] = items[0]
+                return items[0]
     except: pass
-    # Don't cache None — let it retry next time
     return None
 
 results = []
