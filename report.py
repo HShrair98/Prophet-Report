@@ -154,7 +154,7 @@ for i, n in enumerate(all_notes):
             header_date = datetime.strptime(date_str.strip().split()[0], '%m/%d/%Y').strftime('%Y-%m-%d')
             backdated   = header_date != api_date
         except: pass
-    if author and activity_type and api_date:
+    if author and activity_type and api_date and company:
         try:
             note_dt = datetime.fromisoformat(api_date)
             ws      = week_start(note_dt)
